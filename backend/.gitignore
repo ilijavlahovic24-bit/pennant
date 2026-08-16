@@ -1,0 +1,10 @@
+# Binary
+bin/
+*.exe
+*.test
+
+# Environment
+.env
+
+# Test cache
+*.out
