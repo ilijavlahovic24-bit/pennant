@@ -6,21 +6,21 @@ Feature flag management system with multi-tenancy, RBAC, and sub-millisecond fla
 
 ## Overview
 
-Pennant is a self-hosted feature flag platform that enables engineering teams to safely roll out features using gradual rollouts, A/B testing, and targeted user segments — without redeploying. Built to understand and demonstrate enterprise full-stack patterns: multi-tenancy, Redis-backed evaluation, audit logging, and role-based access control.
+Pennant is a self-hosted feature flag platform that enables engineering teams to safely roll out features using gradual rollouts, A/B testing, and targeted user segments - without redeploying. Built to understand and demonstrate enterprise full-stack patterns: multi-tenancy, Redis-backed evaluation, audit logging, and role-based access control.
 
 ---
 
 ## Features
 
-- **Feature Flag Management** — Boolean, string, number, and JSON flags with environment scoping (dev / staging / prod)
-- **Gradual Rollout** — Percentage-based rollout (0% → 10% → 50% → 100%) with deterministic user bucketing
-- **User Targeting** — Segment-based targeting (country, plan, user ID list, custom attributes)
-- **Multi-Tenancy** — Full organization isolation; each org manages its own flags, members, and environments
-- **RBAC** — Three roles: `Owner`, `Editor`, `Viewer` with fine-grained permission enforcement
-- **Audit Log** — Immutable log of every flag change with actor, timestamp, and diff
-- **Scheduled Expiry** — Flags automatically disabled after a configured date (background job)
-- **Live Dashboard** — Real-time flag status updates via WebSocket without page reload
-- **REST SDK** — Simple evaluation endpoint for client integration (`GET /v1/evaluate/:flag_key`)
+- **Feature Flag Management** - Boolean, string, number, and JSON flags with environment scoping (dev / staging / prod)
+- **Gradual Rollout** - Percentage-based rollout (0% → 10% → 50% → 100%) with deterministic user bucketing
+- **User Targeting** - Segment-based targeting (country, plan, user ID list, custom attributes)
+- **Multi-Tenancy** - Full organization isolation; each org manages its own flags, members, and environments
+- **RBAC** - Three roles: `Owner`, `Editor`, `Viewer` with fine-grained permission enforcement
+- **Audit Log** - Immutable log of every flag change with actor, timestamp, and diff
+- **Scheduled Expiry** - Flags automatically disabled after a configured date (background job)
+- **Live Dashboard** - Real-time flag status updates via WebSocket without page reload
+- **REST SDK** - Simple evaluation endpoint for client integration (`GET /v1/evaluate/:flag_key`)
 
 ---
 
@@ -28,25 +28,25 @@ Pennant is a self-hosted feature flag platform that enables engineering teams to
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                    React Frontend                    │
-│         (Dashboard, Flag Editor, Audit Log)          │
+│                    React Frontend                   │
+│         (Dashboard, Flag Editor, Audit Log)         │
 └──────────────────────┬──────────────────────────────┘
                        │ REST + WebSocket
 ┌──────────────────────▼──────────────────────────────┐
-│                    Go API Server                     │
-│              (Gin, JWT Auth, RBAC)                   │
+│                    Go API Server                    │
+│              (Gin, JWT Auth, RBAC)                  │
 ├────────────────┬─────────────────┬──────────────────┤
-│   PostgreSQL   │      Redis       │  Background Jobs │
-│  (persistent   │  (flag cache,    │  (flag expiry,   │
-│   storage)     │   pub/sub)       │   notifications) │
+│   PostgreSQL   │      Redis      │  Background Jobs │
+│  (persistent   │  (flag cache,   │  (flag expiry,   │
+│   storage)     │   pub/sub)      │   notifications) │
 └────────────────┴─────────────────┴──────────────────┘
 ```
 
 **Why Redis?**
-Flag evaluation is called on every incoming request in client services. A PostgreSQL query averages 3–8ms under load; Redis resolves the same flag in ~0.1ms. Flags are cached in Redis with TTL-based invalidation — any flag update triggers a pub/sub event that invalidates affected cache keys across all instances.
+Flag evaluation is called on every incoming request in client services. A PostgreSQL query averages 3–8ms under load; Redis resolves the same flag in ~0.1ms. Flags are cached in Redis with TTL-based invalidation - any flag update triggers a pub/sub event that invalidates affected cache keys across all instances.
 
 **Why multi-tenancy at the DB level?**
-All tables carry an `organization_id` foreign key enforced at the query layer. No row-level security shortcuts — every query explicitly scopes by org, making data leakage between tenants structurally impossible.
+All tables carry an `organization_id` foreign key enforced at the query layer. No row-level security shortcuts - every query explicitly scopes by org, making data leakage between tenants structurally impossible.
 
 ---
 
