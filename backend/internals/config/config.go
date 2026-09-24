@@ -17,7 +17,7 @@ type Config struct {
 	RefreshTTL time.Duration
 }
 
-func load() (*Config, error) {
+func Load() (*Config, error) {
 	cfg := &Config{
 		Env:        getEnv("APP_ENV", "development"),
 		HTTPAddr:   getEnv("HTTP_ADDR", ":8080"),
@@ -28,6 +28,12 @@ func load() (*Config, error) {
 		RefreshTTL: getDuration("REFRESH_TTL", 7*24*time.Hour),
 	}
 
+	if cfg.DBURL == "" {
+		return nil, fmt.Errorf("DATABASE_URL is required")
+	}
+	if cfg.RedisURL == "" {
+		return nil, fmt.Errorf("REDIS_URL is required")
+	}
 	if cfg.JWTSecret == "" {
 		return nil, fmt.Errorf("JWT_SECRET is required")
 	}
