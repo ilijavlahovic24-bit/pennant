@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"pennant/backend/internals/auth"
 	"pennant/backend/internals/config"
+	"pennant/backend/internals/flags"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -19,6 +20,7 @@ type Server struct {
 	db          *pgxpool.Pool
 	redis       *goredis.Client
 	authHandler *auth.Handler
+	flagHandler *flags.Handler
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
@@ -31,11 +33,14 @@ func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
 	router.Use(requestLogger())
 	authSvc := auth.NewService(cfg, db)
 	authHandler := auth.NewHandler(cfg, authSvc)
+	flagSvc := flags.NewService(db)
+	flagHandler := flags.NewHandler(flagSvc)
 	s := &Server{
 		cfg:         cfg,
 		db:          db,
 		redis:       rdb,
 		authHandler: authHandler,
+		flagHandler: flagHandler,
 	}
 	s.registerRoutes(router)
 

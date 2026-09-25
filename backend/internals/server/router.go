@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"net/http"
+	"pennant/backend/internals/auth"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -20,8 +21,27 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		authGroup.POST("/logout", s.authHandler.Logout)
 	}
 
-	api := r.Group("/v1")
-	_ = api
+	v1 := r.Group("/v1", auth.RequireAuth(s.cfg))
+	{
+		org := v1.Group("/orgs/:org_id", auth.RequireOrgAccess())
+		{
+			// read-only (owner, editor, viewer)
+			read := org.Group("", auth.RequireRole("owner", "editor", "viewer"))
+			{
+				read.GET("/flags", s.flagHandler.List)
+				read.GET("/flags/:flag_id", s.flagHandler.Get)
+			}
+
+			// write (owner, editor)
+			write := org.Group("", auth.RequireRole("owner", "editor"))
+			{
+				write.POST("/flags", s.flagHandler.Create)
+				write.PATCH("/flags/:flag_id", s.flagHandler.Update)
+				write.DELETE("/flags/:flag_id", s.flagHandler.Archive)
+				write.PATCH("/flags/:flag_id/environments/:env_id", s.flagHandler.UpdateEnvState)
+			}
+		}
+	}
 }
 
 func (s *Server) healthLive(c *gin.Context) {
