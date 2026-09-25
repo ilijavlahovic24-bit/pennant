@@ -3,15 +3,16 @@ package config
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"time"
 )
 
 type Config struct {
-	Env        string
-	HTTPAddr   string
-	DBURL      string
-	RedisURL   string
+	Env      string
+	HTTPAddr string
+
+	DatabaseURL string
+	RedisURL    string
+
 	JWTSecret  string
 	AccessTTL  time.Duration
 	RefreshTTL time.Duration
@@ -19,16 +20,16 @@ type Config struct {
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		Env:        getEnv("APP_ENV", "development"),
-		HTTPAddr:   getEnv("HTTP_ADDR", ":8080"),
-		DBURL:      getEnv("DATABASE_URL", ""),
-		RedisURL:   getEnv("REDIS_URL", ""),
-		JWTSecret:  getEnv("JWT_SECRET", ""),
-		AccessTTL:  getDuration("ACCESS_TTL", 15*time.Minute),
-		RefreshTTL: getDuration("REFRESH_TTL", 7*24*time.Hour),
+		Env:         getEnv("APP_ENV", "development"),
+		HTTPAddr:    getEnv("HTTP_ADDR", ":8080"),
+		DatabaseURL: getEnv("DATABASE_URL", ""),
+		RedisURL:    getEnv("REDIS_URL", ""),
+		JWTSecret:   getEnv("JWT_SECRET", ""),
+		AccessTTL:   getDuration("ACCESS_TTL", 15*time.Minute),
+		RefreshTTL:  getDuration("REFRESH_TTL", 7*24*time.Hour),
 	}
 
-	if cfg.DBURL == "" {
+	if cfg.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
 	}
 	if cfg.RedisURL == "" {
@@ -40,6 +41,7 @@ func Load() (*Config, error) {
 
 	return cfg, nil
 }
+
 func getEnv(key, fallback string) string {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		return v
@@ -57,16 +59,4 @@ func getDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
-}
-
-func getInt(key string, fallback int) int {
-	v, ok := os.LookupEnv(key)
-	if !ok || v == "" {
-		return fallback
-	}
-	i, err := strconv.Atoi(v)
-	if err != nil {
-		return fallback
-	}
-	return i
 }
