@@ -29,7 +29,7 @@ func main() {
 
 	startCtx, cancelStart := context.WithTimeout(context.Background(), 30*time.Second)
 
-	dbPool, err := db.Connect(startCtx, cfg.DBURL)
+	dbPool, err := db.Connect(startCtx, cfg.DatabaseURL)
 	if err != nil {
 		cancelStart()
 		slog.Error("failed to connect to postgres", "err", err)
