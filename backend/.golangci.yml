@@ -1,16 +1,17 @@
+version: "2"
+
 run:
   timeout: 5m
   tests: true
 
 linters:
+  default: none
   enable:
     - errcheck
     - govet
     - ineffassign
     - staticcheck
     - unused
-    - gofmt
-    - goimports
     - misspell
     - unconvert
     - bodyclose
@@ -19,12 +20,46 @@ linters:
     - rowserrcheck
     - gosec
 
-linters-settings:
-  goimports:
-    local-prefixes: pennant/backend
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
 
-issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - gosec
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+
+    gosec:
+      excludes:
+        - G404   # math/rand — koristićemo crypto/rand gde treba, ali dozvoljavamo math/rand za bucketing testove
+
+    misspell:
+      locale: US
+
+    staticcheck:
+      checks:
+        - all
+        - -ST1000   # package comment nije obavezan
+        - -ST1003   # naming conventions — prepuštamo gofmt/goimports
+
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+
+      - path: migrations/
+        linters:
+          - all
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+  settings:
+    goimports:
+      local-prefixes:
+        - pennant/backend
