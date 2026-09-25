@@ -1,46 +1,183 @@
-name: CD
+name: CI
 
 on:
   push:
-    tags: ["v*"]
-    branches: [main]
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
 
-permissions:
-  contents: read
-  packages: write
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.25.3"
+  NODE_VERSION: "20"
+  GOLANGCI_LINT_VERSION: "v2.4.0"
 
 jobs:
-  publish:
-    name: Publish backend image
+  # ---------------------------------------------------------
+  # Backend — lint, vet, build, unit tests
+  # ---------------------------------------------------------
+  backend:
+    name: Backend (Go)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: backend/go.sum
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Verify go.mod / go.sum
+        run: go mod verify
+
+      - name: Verify Go version matches go.mod
+        run: |
+          GO_MOD_VERSION=$(grep -E '^go ' go.mod | awk '{print $2}')
+          echo "go.mod: $GO_MOD_VERSION, CI: ${{ env.GO_VERSION }}"
+          if [[ "$GO_MOD_VERSION" != "${{ env.GO_VERSION }}" ]]; then
+            echo "::error::go.mod version ($GO_MOD_VERSION) does not match CI GO_VERSION (${{ env.GO_VERSION }})"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          working-directory: backend
+          args: --timeout=5m
+
+      - name: Build
+        run: go build ./...
+
+      - name: Unit tests
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.out
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------
+  # Frontend — lint, typecheck, build
+  # ---------------------------------------------------------
+  frontend:
+    name: Frontend (React/TS)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+
+  # ---------------------------------------------------------
+  # Integration tests — Postgres + Redis kao services
+  # ---------------------------------------------------------
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    needs: [backend]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pennant
+          POSTGRES_PASSWORD: pennant
+          POSTGRES_DB: pennant_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U pennant"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: backend/go.sum
+
+      - name: Install migrate CLI
+        run: |
+          go install -tags 'postgres' \
+            github.com/golang-migrate/migrate/v4/cmd/migrate@v4.17.1
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+      - name: Run migrations
+        run: |
+          migrate -path=./migrations \
+            -database="postgres://pennant:pennant@localhost:5432/pennant_test?sslmode=disable" \
+            up
+
+      - name: Integration tests
+        env:
+          DATABASE_URL: postgres://pennant:pennant@localhost:5432/pennant_test?sslmode=disable
+          REDIS_URL: redis://localhost:6379/0
+          JWT_SECRET: test-secret
+          APP_ENV: test
+        run: go test -tags=integration -race ./...
+
+  # ---------------------------------------------------------
+  # Docker build
+  # ---------------------------------------------------------
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/pennant-backend
-          tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=sha,prefix=sha-
-
-      - name: Build and push
+      - name: Build backend image
         uses: docker/build-push-action@v6
         with:
           context: ./backend
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          push: false
+          tags: pennant-backend:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
