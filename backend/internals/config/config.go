@@ -16,6 +16,9 @@ type Config struct {
 	JWTSecret  string
 	AccessTTL  time.Duration
 	RefreshTTL time.Duration
+
+	CookieSecure bool
+	CookieDomain string // empty for localhost
 }
 
 func Load() (*Config, error) {
@@ -28,7 +31,8 @@ func Load() (*Config, error) {
 		AccessTTL:   getDuration("ACCESS_TTL", 15*time.Minute),
 		RefreshTTL:  getDuration("REFRESH_TTL", 7*24*time.Hour),
 	}
-
+	cfg.CookieSecure = cfg.Env == "production"
+	cfg.CookieDomain = getEnv("COOKIE_DOMAIN", "")
 	if cfg.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
 	}

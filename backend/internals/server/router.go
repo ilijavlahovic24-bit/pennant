@@ -12,6 +12,14 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	r.GET("/health", s.healthLive)
 	r.GET("/health/ready", s.healthReady)
 
+	authGroup := r.Group("/auth")
+	{
+		authGroup.POST("/register", s.authHandler.Register)
+		authGroup.POST("/login", s.authHandler.Login)
+		authGroup.POST("/refresh", s.authHandler.Refresh)
+		authGroup.POST("/logout", s.authHandler.Logout)
+	}
+
 	api := r.Group("/v1")
 	_ = api
 }

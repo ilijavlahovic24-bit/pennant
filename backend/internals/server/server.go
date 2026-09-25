@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"pennant/backend/internals/auth"
 	"pennant/backend/internals/config"
 	"time"
 
@@ -13,10 +14,11 @@ import (
 )
 
 type Server struct {
-	cfg   *config.Config
-	http  *http.Server
-	db    *pgxpool.Pool
-	redis *goredis.Client
+	cfg         *config.Config
+	http        *http.Server
+	db          *pgxpool.Pool
+	redis       *goredis.Client
+	authHandler *auth.Handler
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
@@ -27,11 +29,13 @@ func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(requestLogger())
-
+	authSvc := auth.NewService(cfg, db)
+	authHandler := auth.NewHandler(cfg, authSvc)
 	s := &Server{
-		cfg:   cfg,
-		db:    db,
-		redis: rdb,
+		cfg:         cfg,
+		db:          db,
+		redis:       rdb,
+		authHandler: authHandler,
 	}
 	s.registerRoutes(router)
 
