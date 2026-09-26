@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"pennant/backend/internals/audit"
 	"pennant/backend/internals/repository"
 )
 
@@ -31,17 +32,18 @@ type Service struct {
 	pool     *pgxpool.Pool
 	flagEnvs *repository.FlagEnvRepo
 	rules    *repository.TargetingRuleRepo
+	audit    *audit.Service
 }
 
-func NewService(pool *pgxpool.Pool) *Service {
+func NewService(pool *pgxpool.Pool, auditSvc *audit.Service) *Service {
 	return &Service{
 		pool:     pool,
 		flagEnvs: repository.NewFlagEnvRepo(),
 		rules:    repository.NewTargetingRuleRepo(),
+		audit:    auditSvc,
 	}
 }
 
-// RuleInput is the input for a single rule (without priority — priority is assigned by order).
 type RuleInput struct {
 	Attribute   string          `json:"attribute"`
 	Operator    string          `json:"operator"`
@@ -58,32 +60,44 @@ func (s *Service) List(ctx context.Context, orgID, flagID, envID string) ([]*rep
 	return s.rules.ListByFlagEnv(ctx, s.pool, flagEnv.ID)
 }
 
-// ReplaceAll replaces the entire set of rules in one go.
-// Priority is assigned in the order of the input array (0, 1, 2, ...).
-func (s *Service) ReplaceAll(ctx context.Context, orgID, flagID, envID string, inputs []RuleInput) ([]*repository.TargetingRule, error) {
-	if len(inputs) > maxRulesPerEnv {
+type ReplaceInput struct {
+	OrgID   string
+	ActorID string
+	FlagID  string
+	EnvID   string
+	Rules   []RuleInput
+}
+
+func (s *Service) ReplaceAll(ctx context.Context, in ReplaceInput) ([]*repository.TargetingRule, error) {
+	if len(in.Rules) > maxRulesPerEnv {
 		return nil, ErrTooManyRules
 	}
 
-	flagEnv, err := s.resolveFlagEnv(ctx, orgID, flagID, envID)
+	flagEnv, err := s.resolveFlagEnv(ctx, in.OrgID, in.FlagID, in.EnvID)
 	if err != nil {
 		return nil, err
 	}
 
-	params := make([]repository.CreateRuleParams, len(inputs))
-	for i, in := range inputs {
-		if err := validateRule(in); err != nil {
+	params := make([]repository.CreateRuleParams, len(in.Rules))
+	for i, r := range in.Rules {
+		if err := validateRule(r); err != nil {
 			return nil, fmt.Errorf("rule %d: %w", i, err)
 		}
 		params[i] = repository.CreateRuleParams{
 			FlagEnvID:   flagEnv.ID,
 			Priority:    i,
-			Attribute:   in.Attribute,
-			Operator:    in.Operator,
-			Value:       in.Value,
-			Action:      in.Action,
-			ActionValue: in.ActionValue,
+			Attribute:   r.Attribute,
+			Operator:    r.Operator,
+			Value:       r.Value,
+			Action:      r.Action,
+			ActionValue: r.ActionValue,
 		}
+	}
+
+	// Snimi before za audit.
+	before, err := s.rules.ListByFlagEnv(ctx, s.pool, flagEnv.ID)
+	if err != nil {
+		return nil, err
 	}
 
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -96,6 +110,23 @@ func (s *Service) ReplaceAll(ctx context.Context, orgID, flagID, envID string, i
 		return nil, fmt.Errorf("replace rules: %w", err)
 	}
 
+	after, err := s.rules.ListByFlagEnv(ctx, tx, flagEnv.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.audit.Log(ctx, tx, audit.Entry{
+		OrgID:        in.OrgID,
+		ActorID:      in.ActorID,
+		Action:       audit.ActionTargetingReplace,
+		ResourceType: audit.ResourceTypeTargetingRule,
+		ResourceID:   flagEnv.ID,
+		Before:       rulesToAudit(before),
+		After:        rulesToAudit(after),
+	}); err != nil {
+		return nil, fmt.Errorf("audit: %w", err)
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
 	}
@@ -103,13 +134,20 @@ func (s *Service) ReplaceAll(ctx context.Context, orgID, flagID, envID string, i
 	return s.rules.ListByFlagEnv(ctx, s.pool, flagEnv.ID)
 }
 
-// Add dodaje jedno pravilo na kraj (next priority).
-func (s *Service) Add(ctx context.Context, orgID, flagID, envID string, in RuleInput) (*repository.TargetingRule, error) {
-	if err := validateRule(in); err != nil {
+type AddInput struct {
+	OrgID   string
+	ActorID string
+	FlagID  string
+	EnvID   string
+	Rule    RuleInput
+}
+
+func (s *Service) Add(ctx context.Context, in AddInput) (*repository.TargetingRule, error) {
+	if err := validateRule(in.Rule); err != nil {
 		return nil, err
 	}
 
-	flagEnv, err := s.resolveFlagEnv(ctx, orgID, flagID, envID)
+	flagEnv, err := s.resolveFlagEnv(ctx, in.OrgID, in.FlagID, in.EnvID)
 	if err != nil {
 		return nil, err
 	}
@@ -131,14 +169,26 @@ func (s *Service) Add(ctx context.Context, orgID, flagID, envID string, in RuleI
 	rule, err := s.rules.Create(ctx, tx, repository.CreateRuleParams{
 		FlagEnvID:   flagEnv.ID,
 		Priority:    next,
-		Attribute:   in.Attribute,
-		Operator:    in.Operator,
-		Value:       in.Value,
-		Action:      in.Action,
-		ActionValue: in.ActionValue,
+		Attribute:   in.Rule.Attribute,
+		Operator:    in.Rule.Operator,
+		Value:       in.Rule.Value,
+		Action:      in.Rule.Action,
+		ActionValue: in.Rule.ActionValue,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create rule: %w", err)
+	}
+
+	if err := s.audit.Log(ctx, tx, audit.Entry{
+		OrgID:        in.OrgID,
+		ActorID:      in.ActorID,
+		Action:       audit.ActionTargetingAdd,
+		ResourceType: audit.ResourceTypeTargetingRule,
+		ResourceID:   rule.ID,
+		Before:       nil,
+		After:        ruleToAudit(rule),
+	}); err != nil {
+		return nil, fmt.Errorf("audit: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -147,24 +197,65 @@ func (s *Service) Add(ctx context.Context, orgID, flagID, envID string, in RuleI
 	return rule, nil
 }
 
-func (s *Service) Delete(ctx context.Context, orgID, flagID, envID, ruleID string) error {
-	flagEnv, err := s.resolveFlagEnv(ctx, orgID, flagID, envID)
+type DeleteInput struct {
+	OrgID   string
+	ActorID string
+	FlagID  string
+	EnvID   string
+	RuleID  string
+}
+
+func (s *Service) Delete(ctx context.Context, in DeleteInput) error {
+	flagEnv, err := s.resolveFlagEnv(ctx, in.OrgID, in.FlagID, in.EnvID)
 	if err != nil {
 		return err
 	}
-	ok, err := s.rules.Delete(ctx, s.pool, flagEnv.ID, ruleID)
+
+	existing, err := s.rules.ListByFlagEnv(ctx, s.pool, flagEnv.ID)
+	if err != nil {
+		return err
+	}
+	var before *repository.TargetingRule
+	for _, r := range existing {
+		if r.ID == in.RuleID {
+			before = r
+			break
+		}
+	}
+	if before == nil {
+		return ErrNotFound
+	}
+
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	ok, err := s.rules.Delete(ctx, tx, flagEnv.ID, in.RuleID)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return ErrNotFound
 	}
-	return nil
+
+	if err := s.audit.Log(ctx, tx, audit.Entry{
+		OrgID:        in.OrgID,
+		ActorID:      in.ActorID,
+		Action:       audit.ActionTargetingDelete,
+		ResourceType: audit.ResourceTypeTargetingRule,
+		ResourceID:   in.RuleID,
+		Before:       ruleToAudit(before),
+		After:        nil,
+	}); err != nil {
+		return fmt.Errorf("audit: %w", err)
+	}
+
+	return tx.Commit(ctx)
 }
 
-// resolveFlagEnv checks that the flag belongs to the org and that the env exists for that flag.
 func (s *Service) resolveFlagEnv(ctx context.Context, orgID, flagID, envID string) (*repository.FlagEnvironment, error) {
-	// Prvo proveri da flag pripada org-i.
 	var exists bool
 	err := s.pool.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM flags WHERE id = $1 AND org_id = $2)`,
@@ -186,7 +277,6 @@ func (s *Service) resolveFlagEnv(ctx context.Context, orgID, flagID, envID strin
 	return fe, nil
 }
 
-// validateRule checks attribute, operator, action, value, action_value.
 func validateRule(in RuleInput) error {
 	if len(in.Attribute) == 0 || len(in.Attribute) > 100 {
 		return ErrInvalidAttribute
@@ -197,7 +287,6 @@ func validateRule(in RuleInput) error {
 	if _, ok := validActions[in.Action]; !ok {
 		return ErrInvalidAction
 	}
-
 	if err := validateValue(in.Operator, in.Value); err != nil {
 		return err
 	}
@@ -229,7 +318,6 @@ func validateValue(op string, raw json.RawMessage) error {
 func validateActionValue(action string, raw json.RawMessage) error {
 	switch action {
 	case "serve_enabled", "serve_disabled":
-		// action_value mora biti null ili prazno
 		if len(raw) > 0 && string(raw) != "null" {
 			return ErrInvalidActionValue
 		}
@@ -243,4 +331,38 @@ func validateActionValue(action string, raw json.RawMessage) error {
 		}
 	}
 	return nil
+}
+
+func ruleToAudit(r *repository.TargetingRule) map[string]any {
+	if r == nil {
+		return nil
+	}
+	return map[string]any{
+		"id":           r.ID,
+		"priority":     r.Priority,
+		"attribute":    r.Attribute,
+		"operator":     r.Operator,
+		"value":        rawToAny(r.Value),
+		"action":       r.Action,
+		"action_value": rawToAny(r.ActionValue),
+	}
+}
+
+func rulesToAudit(rules []*repository.TargetingRule) []map[string]any {
+	out := make([]map[string]any, len(rules))
+	for i, r := range rules {
+		out[i] = ruleToAudit(r)
+	}
+	return out
+}
+
+func rawToAny(r json.RawMessage) any {
+	if len(r) == 0 {
+		return nil
+	}
+	var v any
+	if err := json.Unmarshal(r, &v); err != nil {
+		return string(r)
+	}
+	return v
 }

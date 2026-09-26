@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"pennant/backend/internals/audit"
 	"pennant/backend/internals/repository"
 )
 
@@ -27,18 +28,21 @@ type Service struct {
 	pool     *pgxpool.Pool
 	flags    *repository.FlagRepo
 	flagEnvs *repository.FlagEnvRepo
+	audit    *audit.Service
 }
 
-func NewService(pool *pgxpool.Pool) *Service {
+func NewService(pool *pgxpool.Pool, auditSvc *audit.Service) *Service {
 	return &Service{
 		pool:     pool,
 		flags:    repository.NewFlagRepo(),
 		flagEnvs: repository.NewFlagEnvRepo(),
+		audit:    auditSvc,
 	}
 }
 
 type CreateInput struct {
 	OrgID       string
+	ActorID     string
 	Key         string
 	Name        string
 	Description string
@@ -86,6 +90,24 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*FlagWithEnvs, er
 
 	if err := s.flagEnvs.CreateForAllEnvironments(ctx, tx, flag.ID, in.OrgID); err != nil {
 		return nil, fmt.Errorf("create env states: %w", err)
+	}
+
+	if err := s.audit.Log(ctx, tx, audit.Entry{
+		OrgID:        in.OrgID,
+		ActorID:      in.ActorID,
+		Action:       audit.ActionFlagCreate,
+		ResourceType: audit.ResourceTypeFlag,
+		ResourceID:   flag.ID,
+		Before:       nil,
+		After: map[string]any{
+			"key":         flag.Key,
+			"name":        flag.Name,
+			"description": flag.Description,
+			"type":        flag.FlagType,
+			"archived":    flag.Archived,
+		},
+	}); err != nil {
+		return nil, fmt.Errorf("audit: %w", err)
 	}
 
 	envs, err := s.flagEnvs.ListByFlag(ctx, tx, flag.ID)
@@ -175,6 +197,7 @@ func (s *Service) Get(ctx context.Context, orgID, flagID string) (*FlagWithEnvs,
 
 type UpdateInput struct {
 	OrgID       string
+	ActorID     string
 	FlagID      string
 	Name        string
 	Description string
@@ -192,40 +215,103 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (*FlagWithEnvs, er
 		return nil, ErrArchivedNoUpdate
 	}
 
-	flag, err := s.flags.UpdateMetadata(ctx, s.pool, in.OrgID, in.FlagID, in.Name, in.Description)
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	flag, err := s.flags.UpdateMetadata(ctx, tx, in.OrgID, in.FlagID, in.Name, in.Description)
 	if err != nil {
 		return nil, err
 	}
 	if flag == nil {
 		return nil, ErrNotFound
 	}
-	envs, err := s.flagEnvs.ListByFlag(ctx, s.pool, flag.ID)
+
+	if err := s.audit.Log(ctx, tx, audit.Entry{
+		OrgID:        in.OrgID,
+		ActorID:      in.ActorID,
+		Action:       audit.ActionFlagUpdate,
+		ResourceType: audit.ResourceTypeFlag,
+		ResourceID:   flag.ID,
+		Before: map[string]any{
+			"name":        existing.Name,
+			"description": existing.Description,
+		},
+		After: map[string]any{
+			"name":        flag.Name,
+			"description": flag.Description,
+		},
+	}); err != nil {
+		return nil, fmt.Errorf("audit: %w", err)
+	}
+
+	envs, err := s.flagEnvs.ListByFlag(ctx, tx, flag.ID)
 	if err != nil {
 		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
 	}
 	return &FlagWithEnvs{Flag: flag, Environments: envs}, nil
 }
 
-func (s *Service) Archive(ctx context.Context, orgID, flagID string) error {
-	ok, err := s.flags.Archive(ctx, s.pool, orgID, flagID)
+type ArchiveInput struct {
+	OrgID   string
+	ActorID string
+	FlagID  string
+}
+
+func (s *Service) Archive(ctx context.Context, in ArchiveInput) error {
+	existing, err := s.flags.FindByID(ctx, s.pool, in.OrgID, in.FlagID)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return ErrNotFound
+	}
+
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	ok, err := s.flags.Archive(ctx, tx, in.OrgID, in.FlagID)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return ErrNotFound
 	}
-	return nil
+
+	if err := s.audit.Log(ctx, tx, audit.Entry{
+		OrgID:        in.OrgID,
+		ActorID:      in.ActorID,
+		Action:       audit.ActionFlagArchive,
+		ResourceType: audit.ResourceTypeFlag,
+		ResourceID:   in.FlagID,
+		Before:       map[string]any{"archived": false},
+		After:        map[string]any{"archived": true},
+	}); err != nil {
+		return fmt.Errorf("audit: %w", err)
+	}
+
+	return tx.Commit(ctx)
 }
 
 type UpdateEnvInput struct {
 	OrgID          string
+	ActorID        string
 	FlagID         string
 	EnvID          string
 	Enabled        *bool
 	RolloutPercent *int
 	Value          json.RawMessage
 	ValueSet       bool
-	ExpiresAt      *string // RFC3339 ili nil
+	ExpiresAt      *string
 	ClearExpiresAt bool
 }
 
@@ -251,11 +337,11 @@ func (s *Service) UpdateEnvState(ctx context.Context, in UpdateEnvInput) (*repos
 		}
 	}
 
-	existing, err := s.flagEnvs.FindByFlagAndEnv(ctx, s.pool, in.FlagID, in.EnvID)
+	before, err := s.flagEnvs.FindByFlagAndEnv(ctx, s.pool, in.FlagID, in.EnvID)
 	if err != nil {
 		return nil, err
 	}
-	if existing == nil {
+	if before == nil {
 		return nil, ErrEnvNotFound
 	}
 
@@ -268,7 +354,13 @@ func (s *Service) UpdateEnvState(ctx context.Context, in UpdateEnvInput) (*repos
 		expiresAt = &t
 	}
 
-	_, err = s.flagEnvs.Update(ctx, s.pool, in.FlagID, in.EnvID, repository.UpdateFlagEnvParams{
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	after, err := s.flagEnvs.Update(ctx, tx, in.FlagID, in.EnvID, repository.UpdateFlagEnvParams{
 		Enabled:        in.Enabled,
 		RolloutPercent: in.RolloutPercent,
 		Value:          in.Value,
@@ -279,8 +371,36 @@ func (s *Service) UpdateEnvState(ctx context.Context, in UpdateEnvInput) (*repos
 	if err != nil {
 		return nil, err
 	}
+	if after == nil {
+		return nil, ErrEnvNotFound
+	}
 
-	// Učitaj sa env slug/name za response.
+	if err := s.audit.Log(ctx, tx, audit.Entry{
+		OrgID:        in.OrgID,
+		ActorID:      in.ActorID,
+		Action:       audit.ActionFlagEnvUpdate,
+		ResourceType: audit.ResourceTypeFlagEnv,
+		ResourceID:   after.ID,
+		Before: map[string]any{
+			"enabled":         before.Enabled,
+			"rollout_percent": before.RolloutPercent,
+			"value":           rawOrNil(before.Value),
+			"expires_at":      timeOrNil(before.ExpiresAt),
+		},
+		After: map[string]any{
+			"enabled":         after.Enabled,
+			"rollout_percent": after.RolloutPercent,
+			"value":           rawOrNil(after.Value),
+			"expires_at":      timeOrNil(after.ExpiresAt),
+		},
+	}); err != nil {
+		return nil, fmt.Errorf("audit: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+
 	all, err := s.flagEnvs.ListByFlag(ctx, s.pool, in.FlagID)
 	if err != nil {
 		return nil, err
@@ -293,7 +413,6 @@ func (s *Service) UpdateEnvState(ctx context.Context, in UpdateEnvInput) (*repos
 	return nil, ErrEnvNotFound
 }
 
-// validateValue proverava da li JSON vrednost odgovara tipu flaga.
 func validateValue(flagType string, raw json.RawMessage) error {
 	if len(raw) == 0 {
 		return nil
@@ -321,4 +440,24 @@ func validateValue(flagType string, raw json.RawMessage) error {
 		}
 	}
 	return nil
+}
+
+// rawOrNil pretvara json.RawMessage u any za audit diff.
+// Prazno postaje nil (JSON null).
+func rawOrNil(r json.RawMessage) any {
+	if len(r) == 0 {
+		return nil
+	}
+	var v any
+	if err := json.Unmarshal(r, &v); err != nil {
+		return string(r)
+	}
+	return v
+}
+
+func timeOrNil(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339)
 }

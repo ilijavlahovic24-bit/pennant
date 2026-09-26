@@ -4,15 +4,17 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"pennant/backend/internals/auth"
-	"pennant/backend/internals/config"
-	"pennant/backend/internals/flags"
-	"pennant/backend/internals/targeting"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
+
+	"pennant/backend/internals/audit"
+	"pennant/backend/internals/auth"
+	"pennant/backend/internals/config"
+	"pennant/backend/internals/flags"
+	"pennant/backend/internals/targeting"
 )
 
 type Server struct {
@@ -23,6 +25,7 @@ type Server struct {
 	authHandler      *auth.Handler
 	flagHandler      *flags.Handler
 	targetingHandler *targeting.Handler
+	auditHandler     *audit.Handler
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
@@ -33,12 +36,20 @@ func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(requestLogger())
+
+	// Audit se kreira prvi jer ga flags i targeting koriste.
+	auditSvc := audit.NewService(db)
+	auditHandler := audit.NewHandler(auditSvc)
+
 	authSvc := auth.NewService(cfg, db)
 	authHandler := auth.NewHandler(cfg, authSvc)
-	flagSvc := flags.NewService(db)
+
+	flagSvc := flags.NewService(db, auditSvc)
 	flagHandler := flags.NewHandler(flagSvc)
-	targetingSvc := targeting.NewService(db)
+
+	targetingSvc := targeting.NewService(db, auditSvc)
 	targetingHandler := targeting.NewHandler(targetingSvc)
+
 	s := &Server{
 		cfg:              cfg,
 		db:               db,
@@ -46,6 +57,7 @@ func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
 		authHandler:      authHandler,
 		flagHandler:      flagHandler,
 		targetingHandler: targetingHandler,
+		auditHandler:     auditHandler,
 	}
 	s.registerRoutes(router)
 

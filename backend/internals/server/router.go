@@ -26,9 +26,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 
 	// ---------- API v1 ----------
 	v1 := r.Group("/v1", auth.RequireAuth(s.cfg))
-
-	// Sve rute ispod /v1/orgs/:org_id zahtevaju da org_id iz URL-a
-	// odgovara org_id iz JWT-a (RequireOrgAccess).
+	// All routes below /v1/orgs/:org_id require that org_id from the URL
+	// matches org_id from JWT (RequireOrgAccess).
 	org := v1.Group("/orgs/:org_id", auth.RequireOrgAccess())
 
 	// --- Read-only (owner, editor, viewer) ---
@@ -37,6 +36,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		read.GET("/flags", s.flagHandler.List)
 		read.GET("/flags/:flag_id", s.flagHandler.Get)
 		read.GET("/flags/:flag_id/environments/:env_id/rules", s.targetingHandler.List)
+		read.GET("/audit", s.auditHandler.List)
 	}
 
 	// --- Write (owner, editor) ---

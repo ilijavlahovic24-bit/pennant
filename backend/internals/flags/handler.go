@@ -36,6 +36,7 @@ func (h *Handler) Create(c *gin.Context) {
 
 	res, err := h.svc.Create(c.Request.Context(), CreateInput{
 		OrgID:       orgID,
+		ActorID:     auth.UserID(c),
 		Key:         req.Key,
 		Name:        req.Name,
 		Description: req.Description,
@@ -99,6 +100,7 @@ func (h *Handler) Update(c *gin.Context) {
 
 	res, err := h.svc.Update(c.Request.Context(), UpdateInput{
 		OrgID:       orgID,
+		ActorID:     auth.UserID(c),
 		FlagID:      flagID,
 		Name:        req.Name,
 		Description: req.Description,
@@ -114,7 +116,11 @@ func (h *Handler) Archive(c *gin.Context) {
 	orgID := c.Param("org_id")
 	flagID := c.Param("flag_id")
 
-	if err := h.svc.Archive(c.Request.Context(), orgID, flagID); err != nil {
+	if err := h.svc.Archive(c.Request.Context(), ArchiveInput{
+		OrgID:   orgID,
+		ActorID: auth.UserID(c),
+		FlagID:  flagID,
+	}); err != nil {
 		h.writeError(c, err)
 		return
 	}
@@ -134,7 +140,6 @@ func (h *Handler) UpdateEnvState(c *gin.Context) {
 	flagID := c.Param("flag_id")
 	envID := c.Param("env_id")
 
-	// Pročitaj sirovi body da razlikujemo "value nije poslato" od "value = null".
 	body, err := c.GetRawData()
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot read body"})
@@ -156,6 +161,7 @@ func (h *Handler) UpdateEnvState(c *gin.Context) {
 
 	res, err := h.svc.UpdateEnvState(c.Request.Context(), UpdateEnvInput{
 		OrgID:          orgID,
+		ActorID:        auth.UserID(c),
 		FlagID:         flagID,
 		EnvID:          envID,
 		Enabled:        req.Enabled,
@@ -189,7 +195,3 @@ func (h *Handler) writeError(c *gin.Context, err error) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 	}
 }
-
-// Reference na auth paket da izbegnemo unused import u v1 verziji;
-// obriši ako ga već koristiš u drugim handlerima.
-var _ = auth.UserID
