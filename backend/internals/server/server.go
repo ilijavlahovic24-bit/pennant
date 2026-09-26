@@ -7,6 +7,7 @@ import (
 	"pennant/backend/internals/auth"
 	"pennant/backend/internals/config"
 	"pennant/backend/internals/flags"
+	"pennant/backend/internals/targeting"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -15,12 +16,13 @@ import (
 )
 
 type Server struct {
-	cfg         *config.Config
-	http        *http.Server
-	db          *pgxpool.Pool
-	redis       *goredis.Client
-	authHandler *auth.Handler
-	flagHandler *flags.Handler
+	cfg              *config.Config
+	http             *http.Server
+	db               *pgxpool.Pool
+	redis            *goredis.Client
+	authHandler      *auth.Handler
+	flagHandler      *flags.Handler
+	targetingHandler *targeting.Handler
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
@@ -35,12 +37,15 @@ func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
 	authHandler := auth.NewHandler(cfg, authSvc)
 	flagSvc := flags.NewService(db)
 	flagHandler := flags.NewHandler(flagSvc)
+	targetingSvc := targeting.NewService(db)
+	targetingHandler := targeting.NewHandler(targetingSvc)
 	s := &Server{
-		cfg:         cfg,
-		db:          db,
-		redis:       rdb,
-		authHandler: authHandler,
-		flagHandler: flagHandler,
+		cfg:              cfg,
+		db:               db,
+		redis:            rdb,
+		authHandler:      authHandler,
+		flagHandler:      flagHandler,
+		targetingHandler: targetingHandler,
 	}
 	s.registerRoutes(router)
 

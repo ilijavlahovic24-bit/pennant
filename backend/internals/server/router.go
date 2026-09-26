@@ -3,16 +3,19 @@ package server
 import (
 	"context"
 	"net/http"
-	"pennant/backend/internals/auth"
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"pennant/backend/internals/auth"
 )
 
 func (s *Server) registerRoutes(r *gin.Engine) {
+	// ---------- Health ----------
 	r.GET("/health", s.healthLive)
 	r.GET("/health/ready", s.healthReady)
 
+	// ---------- Auth ----------
 	authGroup := r.Group("/auth")
 	{
 		authGroup.POST("/register", s.authHandler.Register)
@@ -21,28 +24,40 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		authGroup.POST("/logout", s.authHandler.Logout)
 	}
 
+	// ---------- API v1 ----------
 	v1 := r.Group("/v1", auth.RequireAuth(s.cfg))
-	{
-		org := v1.Group("/orgs/:org_id", auth.RequireOrgAccess())
-		{
-			// read-only (owner, editor, viewer)
-			read := org.Group("", auth.RequireRole("owner", "editor", "viewer"))
-			{
-				read.GET("/flags", s.flagHandler.List)
-				read.GET("/flags/:flag_id", s.flagHandler.Get)
-			}
 
-			// write (owner, editor)
-			write := org.Group("", auth.RequireRole("owner", "editor"))
-			{
-				write.POST("/flags", s.flagHandler.Create)
-				write.PATCH("/flags/:flag_id", s.flagHandler.Update)
-				write.DELETE("/flags/:flag_id", s.flagHandler.Archive)
-				write.PATCH("/flags/:flag_id/environments/:env_id", s.flagHandler.UpdateEnvState)
-			}
-		}
+	// Sve rute ispod /v1/orgs/:org_id zahtevaju da org_id iz URL-a
+	// odgovara org_id iz JWT-a (RequireOrgAccess).
+	org := v1.Group("/orgs/:org_id", auth.RequireOrgAccess())
+
+	// --- Read-only (owner, editor, viewer) ---
+	read := org.Group("", auth.RequireRole("owner", "editor", "viewer"))
+	{
+		read.GET("/flags", s.flagHandler.List)
+		read.GET("/flags/:flag_id", s.flagHandler.Get)
+		read.GET("/flags/:flag_id/environments/:env_id/rules", s.targetingHandler.List)
+	}
+
+	// --- Write (owner, editor) ---
+	write := org.Group("", auth.RequireRole("owner", "editor"))
+	{
+		// Flags
+		write.POST("/flags", s.flagHandler.Create)
+		write.PATCH("/flags/:flag_id", s.flagHandler.Update)
+		write.DELETE("/flags/:flag_id", s.flagHandler.Archive)
+
+		// Flag environment state
+		write.PATCH("/flags/:flag_id/environments/:env_id", s.flagHandler.UpdateEnvState)
+
+		// Targeting rules
+		write.PUT("/flags/:flag_id/environments/:env_id/rules", s.targetingHandler.ReplaceAll)
+		write.POST("/flags/:flag_id/environments/:env_id/rules", s.targetingHandler.Add)
+		write.DELETE("/flags/:flag_id/environments/:env_id/rules/:rule_id", s.targetingHandler.Delete)
 	}
 }
+
+// ---------- Health handlers ----------
 
 func (s *Server) healthLive(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
