@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"pennant/backend/internals/audit"
+	"pennant/backend/internals/evaluation"
 	"pennant/backend/internals/repository"
 )
 
@@ -29,18 +31,20 @@ var validActions = map[string]struct{}{
 }
 
 type Service struct {
-	pool     *pgxpool.Pool
-	flagEnvs *repository.FlagEnvRepo
-	rules    *repository.TargetingRuleRepo
-	audit    *audit.Service
+	pool      *pgxpool.Pool
+	flagEnvs  *repository.FlagEnvRepo
+	rules     *repository.TargetingRuleRepo
+	audit     *audit.Service
+	publisher *evaluation.Publisher
 }
 
-func NewService(pool *pgxpool.Pool, auditSvc *audit.Service) *Service {
+func NewService(pool *pgxpool.Pool, auditSvc *audit.Service, publisher *evaluation.Publisher) *Service {
 	return &Service{
-		pool:     pool,
-		flagEnvs: repository.NewFlagEnvRepo(),
-		rules:    repository.NewTargetingRuleRepo(),
-		audit:    auditSvc,
+		pool:      pool,
+		flagEnvs:  repository.NewFlagEnvRepo(),
+		rules:     repository.NewTargetingRuleRepo(),
+		audit:     auditSvc,
+		publisher: publisher,
 	}
 }
 
@@ -131,6 +135,10 @@ func (s *Service) ReplaceAll(ctx context.Context, in ReplaceInput) ([]*repositor
 		return nil, fmt.Errorf("commit: %w", err)
 	}
 
+	if err := s.publisher.PublishFlagUpdate(ctx, in.OrgID); err != nil {
+		slog.Warn("publish flag update failed", "err", err, "org_id", in.OrgID)
+	}
+
 	return s.rules.ListByFlagEnv(ctx, s.pool, flagEnv.ID)
 }
 
@@ -194,6 +202,11 @@ func (s *Service) Add(ctx context.Context, in AddInput) (*repository.TargetingRu
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
 	}
+
+	if err := s.publisher.PublishFlagUpdate(ctx, in.OrgID); err != nil {
+		slog.Warn("publish flag update failed", "err", err, "org_id", in.OrgID)
+	}
+
 	return rule, nil
 }
 
@@ -252,7 +265,15 @@ func (s *Service) Delete(ctx context.Context, in DeleteInput) error {
 		return fmt.Errorf("audit: %w", err)
 	}
 
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+
+	if err := s.publisher.PublishFlagUpdate(ctx, in.OrgID); err != nil {
+		slog.Warn("publish flag update failed", "err", err, "org_id", in.OrgID)
+	}
+
+	return nil
 }
 
 func (s *Service) resolveFlagEnv(ctx context.Context, orgID, flagID, envID string) (*repository.FlagEnvironment, error) {

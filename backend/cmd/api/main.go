@@ -7,12 +7,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"syscall"
+	"time"
+
 	"pennant/backend/internals/config"
 	"pennant/backend/internals/db"
 	redisclient "pennant/backend/internals/redis"
 	"pennant/backend/internals/server"
-	"syscall"
-	"time"
 )
 
 func main() {
@@ -49,6 +50,13 @@ func main() {
 
 	srv := server.New(cfg, dbPool, rdb)
 
+	// Pub/sub subscriber za invalidaciju evaluation cache-a.
+	// Živi dok se ne otkaže subCtx (na shutdown-u).
+	subCtx, cancelSub := context.WithCancel(context.Background())
+	defer cancelSub()
+
+	go srv.RunSubscriber(subCtx)
+
 	errCh := make(chan error, 1)
 	go func() {
 		slog.Info("http server starting", "addr", cfg.HTTPAddr, "env", cfg.Env)
@@ -63,11 +71,16 @@ func main() {
 	select {
 	case err := <-errCh:
 		slog.Error("server error", "err", err)
+		cancelSub()
 		os.Exit(1)
 	case sig := <-stop:
 		slog.Info("shutdown signal received", "signal", sig.String())
 	}
 
+	// Prvo zaustavljamo subscriber (prekidamo Redis PSubscribe).
+	cancelSub()
+
+	// Zatim graceful shutdown HTTP servera.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

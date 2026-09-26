@@ -13,6 +13,7 @@ import (
 	"pennant/backend/internals/audit"
 	"pennant/backend/internals/auth"
 	"pennant/backend/internals/config"
+	"pennant/backend/internals/evaluation"
 	"pennant/backend/internals/flags"
 	"pennant/backend/internals/targeting"
 )
@@ -26,6 +27,8 @@ type Server struct {
 	flagHandler      *flags.Handler
 	targetingHandler *targeting.Handler
 	auditHandler     *audit.Handler
+	evalHandler      *evaluation.Handler
+	evalSubscriber   *evaluation.Subscriber
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
@@ -37,17 +40,24 @@ func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
 	router.Use(gin.Recovery())
 	router.Use(requestLogger())
 
-	// Audit se kreira prvi jer ga flags i targeting koriste.
+	// --- Evaluation engine (cache + pub/sub) ---
+	evalCache := evaluation.NewCache(rdb)
+	evalEngine := evaluation.NewEngine(db, evalCache)
+	evalHandler := evaluation.NewHandler(evalEngine)
+	evalPublisher := evaluation.NewPublisher(rdb)
+	evalSubscriber := evaluation.NewSubscriber(rdb, evalCache)
+
+	// --- Domenski servisi ---
 	auditSvc := audit.NewService(db)
 	auditHandler := audit.NewHandler(auditSvc)
 
 	authSvc := auth.NewService(cfg, db)
 	authHandler := auth.NewHandler(cfg, authSvc)
 
-	flagSvc := flags.NewService(db, auditSvc)
+	flagSvc := flags.NewService(db, auditSvc, evalPublisher)
 	flagHandler := flags.NewHandler(flagSvc)
 
-	targetingSvc := targeting.NewService(db, auditSvc)
+	targetingSvc := targeting.NewService(db, auditSvc, evalPublisher)
 	targetingHandler := targeting.NewHandler(targetingSvc)
 
 	s := &Server{
@@ -58,6 +68,8 @@ func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
 		flagHandler:      flagHandler,
 		targetingHandler: targetingHandler,
 		auditHandler:     auditHandler,
+		evalHandler:      evalHandler,
+		evalSubscriber:   evalSubscriber,
 	}
 	s.registerRoutes(router)
 
@@ -70,6 +82,12 @@ func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
 		IdleTimeout:       60 * time.Second,
 	}
 	return s
+}
+
+// RunSubscriber pokreće pub/sub slušaoca u pozadini.
+// Poziva se iz main-a kao goroutine.
+func (s *Server) RunSubscriber(ctx context.Context) {
+	s.evalSubscriber.Run(ctx)
 }
 
 func (s *Server) Start() error {

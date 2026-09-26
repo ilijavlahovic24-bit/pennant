@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"pennant/backend/internals/audit"
+	"pennant/backend/internals/evaluation"
 	"pennant/backend/internals/repository"
 )
 
@@ -25,18 +27,20 @@ var validTypes = map[string]struct{}{
 }
 
 type Service struct {
-	pool     *pgxpool.Pool
-	flags    *repository.FlagRepo
-	flagEnvs *repository.FlagEnvRepo
-	audit    *audit.Service
+	pool      *pgxpool.Pool
+	flags     *repository.FlagRepo
+	flagEnvs  *repository.FlagEnvRepo
+	audit     *audit.Service
+	publisher *evaluation.Publisher
 }
 
-func NewService(pool *pgxpool.Pool, auditSvc *audit.Service) *Service {
+func NewService(pool *pgxpool.Pool, auditSvc *audit.Service, publisher *evaluation.Publisher) *Service {
 	return &Service{
-		pool:     pool,
-		flags:    repository.NewFlagRepo(),
-		flagEnvs: repository.NewFlagEnvRepo(),
-		audit:    auditSvc,
+		pool:      pool,
+		flags:     repository.NewFlagRepo(),
+		flagEnvs:  repository.NewFlagEnvRepo(),
+		audit:     auditSvc,
+		publisher: publisher,
 	}
 }
 
@@ -255,6 +259,13 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (*FlagWithEnvs, er
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
 	}
+
+	// Metapodaci ne utiču na evaluation, ali invalidacija je jeftina i
+	// drži cache konzistentnim sa DB-om.
+	if err := s.publisher.PublishFlagUpdate(ctx, in.OrgID); err != nil {
+		slog.Warn("publish flag update failed", "err", err, "org_id", in.OrgID)
+	}
+
 	return &FlagWithEnvs{Flag: flag, Environments: envs}, nil
 }
 
@@ -299,7 +310,16 @@ func (s *Service) Archive(ctx context.Context, in ArchiveInput) error {
 		return fmt.Errorf("audit: %w", err)
 	}
 
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+
+	// Arhiviran flag mora biti isključen iz evaluacije → invalidiraj cache.
+	if err := s.publisher.PublishFlagUpdate(ctx, in.OrgID); err != nil {
+		slog.Warn("publish flag update failed", "err", err, "org_id", in.OrgID)
+	}
+
+	return nil
 }
 
 type UpdateEnvInput struct {
@@ -399,6 +419,11 @@ func (s *Service) UpdateEnvState(ctx context.Context, in UpdateEnvInput) (*repos
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
+	}
+
+	// Ključna invalidacija — ovo menja evaluation ishod.
+	if err := s.publisher.PublishFlagUpdate(ctx, in.OrgID); err != nil {
+		slog.Warn("publish flag update failed", "err", err, "org_id", in.OrgID)
 	}
 
 	all, err := s.flagEnvs.ListByFlag(ctx, s.pool, in.FlagID)
