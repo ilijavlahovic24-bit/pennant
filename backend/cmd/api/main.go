@@ -50,12 +50,12 @@ func main() {
 
 	srv := server.New(cfg, dbPool, rdb)
 
-	// Pub/sub subscriber za invalidaciju evaluation cache-a.
-	// Živi dok se ne otkaže subCtx (na shutdown-u).
-	subCtx, cancelSub := context.WithCancel(context.Background())
-	defer cancelSub()
+	// Background worker-i dele isti kontekst života.
+	bgCtx, cancelBg := context.WithCancel(context.Background())
+	defer cancelBg()
 
-	go srv.RunSubscriber(subCtx)
+	go srv.RunSubscriber(bgCtx)
+	go srv.RunScheduler(bgCtx)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -71,16 +71,15 @@ func main() {
 	select {
 	case err := <-errCh:
 		slog.Error("server error", "err", err)
-		cancelSub()
+		cancelBg()
 		os.Exit(1)
 	case sig := <-stop:
 		slog.Info("shutdown signal received", "signal", sig.String())
 	}
 
-	// Prvo zaustavljamo subscriber (prekidamo Redis PSubscribe).
-	cancelSub()
+	// Zaustavljamo background worker-e prvo.
+	cancelBg()
 
-	// Zatim graceful shutdown HTTP servera.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
