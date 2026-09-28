@@ -9,15 +9,15 @@ import (
 )
 
 type Flag struct {
-	ID          string
-	OrgID       string
-	Key         string
-	Name        string
-	Description string
-	FlagType    string // boolean | string | number | json
-	Archived    bool
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID          string    `json:"id"`
+	OrgID       string    `json:"org_id"`
+	Key         string    `json:"key"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	FlagType    string    `json:"flag_type"`
+	Archived    bool      `json:"archived"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type FlagRepo struct{}

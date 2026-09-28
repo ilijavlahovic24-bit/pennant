@@ -7,15 +7,15 @@ import (
 )
 
 type AuditLog struct {
-	ID           string
-	OrgID        string
-	UserID       *string
-	Action       string
-	ResourceType string
-	ResourceID   *string
-	Diff         json.RawMessage
-	CreatedAt    time.Time
-	ActorEmail   *string // JOIN iz users, null za system
+	ID           string          `json:"id"`
+	OrgID        string          `json:"org_id"`
+	UserID       *string         `json:"user_id"`
+	Action       string          `json:"action"`
+	ResourceType string          `json:"resource_type"`
+	ResourceID   *string         `json:"resource_id"`
+	Diff         json.RawMessage `json:"diff"`
+	CreatedAt    time.Time       `json:"created_at"`
+	ActorEmail   *string         `json:"actor_email"`
 }
 
 type AuditLogRepo struct{}

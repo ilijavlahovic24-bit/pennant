@@ -10,16 +10,16 @@ import (
 )
 
 type TargetingRule struct {
-	ID          string
-	FlagEnvID   string
-	Priority    int
-	Attribute   string
-	Operator    string
-	Value       json.RawMessage
-	Action      string
-	ActionValue json.RawMessage
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID          string          `json:"id"`
+	FlagEnvID   string          `json:"flag_env_id"`
+	Priority    int             `json:"priority"`
+	Attribute   string          `json:"attribute"`
+	Operator    string          `json:"operator"`
+	Value       json.RawMessage `json:"value"`
+	Action      string          `json:"action"`
+	ActionValue json.RawMessage `json:"action_value,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
 }
 
 type TargetingRuleRepo struct{}

@@ -10,22 +10,21 @@ import (
 )
 
 type FlagEnvironment struct {
-	ID             string
-	FlagID         string
-	EnvID          string
-	Enabled        bool
-	RolloutPercent int
-	Value          json.RawMessage // može biti nil
-	ExpiresAt      *time.Time
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID             string          `json:"id"`
+	FlagID         string          `json:"flag_id"`
+	EnvID          string          `json:"env_id"`
+	Enabled        bool            `json:"enabled"`
+	RolloutPercent int             `json:"rollout_percent"`
+	Value          json.RawMessage `json:"value,omitempty"`
+	ExpiresAt      *time.Time      `json:"expires_at,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
-// FlagEnvironmentDetailed je za odgovor API-ja — sadrži i env slug/name.
 type FlagEnvironmentDetailed struct {
 	FlagEnvironment
-	EnvSlug string
-	EnvName string
+	EnvSlug string `json:"env_slug"`
+	EnvName string `json:"env_name"`
 }
 
 type FlagEnvRepo struct{}
