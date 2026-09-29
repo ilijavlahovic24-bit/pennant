@@ -9,17 +9,23 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// Subscriber sluša sve `flag-updates:*` kanale i invalidira cache.
+// UpdateHandler is called on every message with org_id.
+type UpdateHandler func(ctx context.Context, orgID string)
+
 type Subscriber struct {
-	rdb   *goredis.Client
-	cache *Cache
+	rdb      *goredis.Client
+	handlers []UpdateHandler
 }
 
-func NewSubscriber(rdb *goredis.Client, cache *Cache) *Subscriber {
-	return &Subscriber{rdb: rdb, cache: cache}
+func NewSubscriber(rdb *goredis.Client) *Subscriber {
+	return &Subscriber{rdb: rdb}
 }
 
-// Run se pokreće u goroutine-i iz main-a. Blokira dok se ctx ne otkaže.
+// OnUpdate registers a handler. Call before Run().
+func (s *Subscriber) OnUpdate(h UpdateHandler) {
+	s.handlers = append(s.handlers, h)
+}
+
 func (s *Subscriber) Run(ctx context.Context) {
 	pubsub := s.rdb.PSubscribe(ctx, "flag-updates:*")
 	defer func() { _ = pubsub.Close() }()
@@ -56,9 +62,8 @@ func (s *Subscriber) handle(ctx context.Context, channel, payload string) {
 	if orgID == "" {
 		return
 	}
-	if err := s.cache.InvalidateOrg(ctx, orgID); err != nil {
-		slog.Error("cache invalidation failed", "err", err, "org_id", orgID)
-		return
+
+	for _, h := range s.handlers {
+		h(ctx, orgID)
 	}
-	slog.Debug("evaluation cache invalidated", "org_id", orgID)
 }

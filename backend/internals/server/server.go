@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
@@ -18,6 +20,7 @@ import (
 	"pennant/backend/internals/jobs"
 	"pennant/backend/internals/members"
 	"pennant/backend/internals/targeting"
+	"pennant/backend/internals/ws"
 )
 
 type Server struct {
@@ -30,9 +33,10 @@ type Server struct {
 	targetingHandler *targeting.Handler
 	auditHandler     *audit.Handler
 	evalHandler      *evaluation.Handler
+	membersHandler   *members.Handler
+	wsHandler        *ws.Handler
 	evalSubscriber   *evaluation.Subscriber
 	scheduler        *jobs.Scheduler
-	membersHandler   *members.Handler
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
@@ -43,13 +47,35 @@ func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(requestLogger())
+	router.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:5173", "http://localhost:3000"},
+		AllowMethods:     []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Authorization", "Content-Type", "X-User-Context"},
+		AllowCredentials: true,
+	}))
+
+	// --- WebSocket hub ---
+	wsHub := ws.NewHub()
+	wsHandler := ws.NewHandler(wsHub, cfg)
 
 	// --- Evaluation engine (cache + pub/sub) ---
 	evalCache := evaluation.NewCache(rdb)
 	evalEngine := evaluation.NewEngine(db, evalCache)
 	evalHandler := evaluation.NewHandler(evalEngine)
 	evalPublisher := evaluation.NewPublisher(rdb)
-	evalSubscriber := evaluation.NewSubscriber(rdb, evalCache)
+
+	evalSubscriber := evaluation.NewSubscriber(rdb)
+	evalSubscriber.OnUpdate(func(ctx context.Context, orgID string) {
+		if err := evalCache.InvalidateOrg(ctx, orgID); err != nil {
+			slog.Error("cache invalidation failed", "err", err, "org_id", orgID)
+		}
+	})
+	evalSubscriber.OnUpdate(func(_ context.Context, orgID string) {
+		wsHub.BroadcastToOrg(orgID, ws.Event{
+			Type:    "flag.updated",
+			Payload: map[string]any{"org_id": orgID},
+		})
+	})
 
 	// --- Domenski servisi ---
 	auditSvc := audit.NewService(db)
@@ -63,8 +89,11 @@ func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
 
 	targetingSvc := targeting.NewService(db, auditSvc, evalPublisher)
 	targetingHandler := targeting.NewHandler(targetingSvc)
+
 	membersSvc := members.NewService(db, cfg, auditSvc)
 	membersHandler := members.NewHandler(membersSvc)
+
+	// --- Background jobs ---
 	expiryJob := jobs.NewExpiryJob(db, auditSvc, evalPublisher)
 	scheduler := jobs.NewScheduler(expiryJob, cfg.ExpiryInterval)
 
@@ -77,9 +106,10 @@ func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
 		targetingHandler: targetingHandler,
 		auditHandler:     auditHandler,
 		evalHandler:      evalHandler,
+		membersHandler:   membersHandler,
+		wsHandler:        wsHandler,
 		evalSubscriber:   evalSubscriber,
 		scheduler:        scheduler,
-		membersHandler:   membersHandler,
 	}
 	s.registerRoutes(router)
 
@@ -94,10 +124,12 @@ func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
 	return s
 }
 
-// RunSubscriber pokreće pub/sub slušaoca u pozadini.
-// Poziva se iz main-a kao goroutine.
 func (s *Server) RunSubscriber(ctx context.Context) {
 	s.evalSubscriber.Run(ctx)
+}
+
+func (s *Server) RunScheduler(ctx context.Context) {
+	s.scheduler.Run(ctx)
 }
 
 func (s *Server) Start() error {
@@ -109,7 +141,4 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return err
 	}
 	return nil
-}
-func (s *Server) RunScheduler(ctx context.Context) {
-	s.scheduler.Run(ctx)
 }

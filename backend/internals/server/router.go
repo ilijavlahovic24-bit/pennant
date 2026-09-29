@@ -11,31 +11,38 @@ import (
 )
 
 func (s *Server) registerRoutes(r *gin.Engine) {
+	// --- Health ---
 	r.GET("/health", s.healthLive)
 	r.GET("/health/ready", s.healthReady)
+
+	// --- WebSocket ---
+	// Auth ide preko ?token=<jwt> query param, jer browser WebSocket API
+	// ne može da pošalje Authorization header pri uspostavljanju konekcije.
+	// Zato ova ruta NIJE u v1 grupi (koja ima RequireAuth middleware).
+	r.GET("/v1/ws/flags", s.wsHandler.Serve)
 
 	// --- Auth ---
 	authGroup := r.Group("/auth")
 	{
-		// public routes
+		// javne
 		authGroup.POST("/register", s.authHandler.Register)
 		authGroup.POST("/login", s.authHandler.Login)
 		authGroup.POST("/refresh", s.authHandler.Refresh)
 		authGroup.POST("/logout", s.authHandler.Logout)
-		// protected routes - require valid access token (Bearer)
+
+		// zaštićene (Bearer token)
 		authed := authGroup.Group("", auth.RequireAuth(s.cfg))
 		authed.POST("/switch-org", s.authHandler.SwitchOrg)
 	}
 
-	// r.GET("/v1/ws/flags", s.wsHandler.Serve)
-
 	// --- API v1 ---
 	v1 := r.Group("/v1", auth.RequireAuth(s.cfg))
 
-	// Evaluation (org from JWT-a)
+	// Evaluation (org iz JWT-a, ne iz URL-a)
 	eval := v1.Group("/evaluate", auth.RequireRole("owner", "editor", "viewer"))
 	{
-		eval.GET("/batch", s.evalHandler.Batch) // pre /:flag_key!
+		// /batch MORA biti registrovan pre /:flag_key
+		eval.GET("/batch", s.evalHandler.Batch)
 		eval.GET("/:flag_key", s.evalHandler.Evaluate)
 	}
 
@@ -45,6 +52,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	// --- Org-scoped rute ---
 	org := v1.Group("/orgs/:org_id", auth.RequireOrgAccess())
 
+	// Read (owner, editor, viewer)
 	read := org.Group("", auth.RequireRole("owner", "editor", "viewer"))
 	{
 		read.GET("/flags", s.flagHandler.List)
@@ -54,6 +62,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		read.GET("/members", s.membersHandler.List)
 	}
 
+	// Write (owner, editor)
 	write := org.Group("", auth.RequireRole("owner", "editor"))
 	{
 		write.POST("/flags", s.flagHandler.Create)
@@ -65,6 +74,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		write.DELETE("/flags/:flag_id/environments/:env_id/rules/:rule_id", s.targetingHandler.Delete)
 	}
 
+	// Owner-only (member management + invitations)
 	owner := org.Group("", auth.RequireRole("owner"))
 	{
 		owner.POST("/members/invite", s.membersHandler.Invite)
@@ -74,6 +84,8 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		owner.DELETE("/invitations/:invite_id", s.membersHandler.RevokeInvite)
 	}
 }
+
+// --- Health handlers ---
 
 func (s *Server) healthLive(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})

@@ -2,7 +2,10 @@ module pennant/backend
 
 go 1.25.3
 
-require github.com/gin-gonic/gin v1.12.0
+require (
+	github.com/gin-contrib/cors v1.7.6
+	github.com/gin-gonic/gin v1.12.0
+)
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -26,6 +29,7 @@ require (
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
