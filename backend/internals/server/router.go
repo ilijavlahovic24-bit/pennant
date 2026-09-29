@@ -14,23 +14,33 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 	r.GET("/health", s.healthLive)
 	r.GET("/health/ready", s.healthReady)
 
+	// --- Auth ---
 	authGroup := r.Group("/auth")
 	{
+		// public routes
 		authGroup.POST("/register", s.authHandler.Register)
 		authGroup.POST("/login", s.authHandler.Login)
 		authGroup.POST("/refresh", s.authHandler.Refresh)
 		authGroup.POST("/logout", s.authHandler.Logout)
+		// protected routes - require valid access token (Bearer)
+		authed := authGroup.Group("", auth.RequireAuth(s.cfg))
+		authed.POST("/switch-org", s.authHandler.SwitchOrg)
 	}
 
+	// r.GET("/v1/ws/flags", s.wsHandler.Serve)
+
+	// --- API v1 ---
 	v1 := r.Group("/v1", auth.RequireAuth(s.cfg))
 
-	// --- Evaluation (org iz JWT-a, ne iz URL-a) ---
+	// Evaluation (org from JWT-a)
 	eval := v1.Group("/evaluate", auth.RequireRole("owner", "editor", "viewer"))
 	{
-		// /batch MORA biti registrovan pre /:flag_key
-		eval.GET("/batch", s.evalHandler.Batch)
+		eval.GET("/batch", s.evalHandler.Batch) // pre /:flag_key!
 		eval.GET("/:flag_key", s.evalHandler.Evaluate)
 	}
+
+	// Prihvatanje pozivnice — samo auth, ne treba org access
+	v1.POST("/invitations/accept", s.membersHandler.Accept)
 
 	// --- Org-scoped rute ---
 	org := v1.Group("/orgs/:org_id", auth.RequireOrgAccess())
@@ -41,6 +51,7 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		read.GET("/flags/:flag_id", s.flagHandler.Get)
 		read.GET("/flags/:flag_id/environments/:env_id/rules", s.targetingHandler.List)
 		read.GET("/audit", s.auditHandler.List)
+		read.GET("/members", s.membersHandler.List)
 	}
 
 	write := org.Group("", auth.RequireRole("owner", "editor"))
@@ -48,12 +59,19 @@ func (s *Server) registerRoutes(r *gin.Engine) {
 		write.POST("/flags", s.flagHandler.Create)
 		write.PATCH("/flags/:flag_id", s.flagHandler.Update)
 		write.DELETE("/flags/:flag_id", s.flagHandler.Archive)
-
 		write.PATCH("/flags/:flag_id/environments/:env_id", s.flagHandler.UpdateEnvState)
-
 		write.PUT("/flags/:flag_id/environments/:env_id/rules", s.targetingHandler.ReplaceAll)
 		write.POST("/flags/:flag_id/environments/:env_id/rules", s.targetingHandler.Add)
 		write.DELETE("/flags/:flag_id/environments/:env_id/rules/:rule_id", s.targetingHandler.Delete)
+	}
+
+	owner := org.Group("", auth.RequireRole("owner"))
+	{
+		owner.POST("/members/invite", s.membersHandler.Invite)
+		owner.PATCH("/members/:user_id", s.membersHandler.UpdateRole)
+		owner.DELETE("/members/:user_id", s.membersHandler.Remove)
+		owner.GET("/invitations", s.membersHandler.ListInvitations)
+		owner.DELETE("/invitations/:invite_id", s.membersHandler.RevokeInvite)
 	}
 }
 

@@ -13,4 +13,5 @@ var (
 	ErrNoMembership       = errors.New("user has no organization membership")
 	ErrForbidden          = errors.New("forbidden")
 	ErrUnauthorized       = errors.New("unauthorized")
+	ErrNotMember          = errors.New("user is not a member of this organization")
 )

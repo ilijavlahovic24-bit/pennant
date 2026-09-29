@@ -47,3 +47,17 @@ func (r *UserRepo) FindByEmail(ctx context.Context, q DBTX, email string) (*User
 	}
 	return u, nil
 }
+func (r *UserRepo) FindByID(ctx context.Context, q DBTX, id string) (*User, error) {
+	u := &User{}
+	err := q.QueryRow(ctx, `
+		SELECT id, email, password_hash, created_at, updated_at
+		FROM users WHERE id = $1
+	`, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return u, nil
+}

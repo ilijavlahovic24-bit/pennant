@@ -11,7 +11,7 @@ import (
 	"pennant/backend/internals/repository"
 )
 
-// Action konstante — koristimo ih da izbegnemo typo greške.
+// Action constansts - used in audit log entries. These are used to identify the type of action performed.
 const (
 	ActionFlagCreate          = "flag.create"
 	ActionFlagUpdate          = "flag.update"
@@ -21,6 +21,11 @@ const (
 	ActionTargetingReplace    = "targeting_rule.replace"
 	ActionTargetingDelete     = "targeting_rule.delete"
 	ActionSystemFlagEnvExpire = "system.flag_env.expire"
+	ActionMembershipInvite    = "membership.invite"
+	ActionMembershipAccept    = "membership.accept"
+	ActionMembershipUpdate    = "membership.update"
+	ActionMembershipRemove    = "membership.remove"
+	ActionMembershipRevoke    = "membership.invite_revoke"
 )
 
 // ResourceType konstante.
@@ -29,6 +34,7 @@ const (
 	ResourceTypeFlagEnv       = "flag_environment"
 	ResourceTypeTargetingRule = "targeting_rule"
 	ResourceTypeMembership    = "membership"
+	ResourceTypeInvitation    = "invitation"
 )
 
 type Entry struct {

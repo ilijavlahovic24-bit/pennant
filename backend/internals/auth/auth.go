@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -144,4 +146,56 @@ func (h *Handler) writeAuthError(c *gin.Context, err error) {
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 	}
+}
+
+// SwitchOrg issues a new access token for the given organization.
+// Refresh token remains the same — binds to user, not org.
+func (s *Service) SwitchOrg(ctx context.Context, userID, orgID string) (string, string, error) {
+	m, err := s.members.Find(ctx, s.pool, userID, orgID)
+	if err != nil {
+		return "", "", fmt.Errorf("find membership: %w", err)
+	}
+	if m == nil {
+		return "", "", ErrNotMember
+	}
+
+	access, err := GenerateAccessToken(s.cfg.JWTSecret, userID, orgID, m.Role, s.cfg.AccessTTL)
+	if err != nil {
+		return "", "", err
+	}
+	return access, m.Role, nil
+}
+
+type switchOrgReq struct {
+	OrgID string `json:"org_id"`
+}
+
+func (h *Handler) SwitchOrg(c *gin.Context) {
+	userID := c.GetString("auth.user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	var req switchOrgReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json"})
+		return
+	}
+
+	access, role, err := h.svc.SwitchOrg(c.Request.Context(), userID, req.OrgID)
+	if err != nil {
+		if errors.Is(err, ErrNotMember) {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"access_token": access,
+		"org_id":       req.OrgID,
+		"role":         role,
+	})
 }

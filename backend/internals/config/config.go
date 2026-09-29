@@ -20,6 +20,7 @@ type Config struct {
 	CookieSecure   bool
 	CookieDomain   string // empty for localhost
 	ExpiryInterval time.Duration
+	InvitationTTL  time.Duration
 }
 
 func Load() (*Config, error) {
@@ -44,6 +45,7 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("JWT_SECRET is required")
 	}
 	cfg.ExpiryInterval = getDuration("EXPIRY_INTERVAL", time.Minute)
+	cfg.InvitationTTL = getDuration("INVITATION_TTL", 7*24*time.Hour)
 	return cfg, nil
 }
 

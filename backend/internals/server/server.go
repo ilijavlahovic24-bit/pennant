@@ -16,6 +16,7 @@ import (
 	"pennant/backend/internals/evaluation"
 	"pennant/backend/internals/flags"
 	"pennant/backend/internals/jobs"
+	"pennant/backend/internals/members"
 	"pennant/backend/internals/targeting"
 )
 
@@ -31,6 +32,7 @@ type Server struct {
 	evalHandler      *evaluation.Handler
 	evalSubscriber   *evaluation.Subscriber
 	scheduler        *jobs.Scheduler
+	membersHandler   *members.Handler
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
@@ -61,7 +63,8 @@ func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
 
 	targetingSvc := targeting.NewService(db, auditSvc, evalPublisher)
 	targetingHandler := targeting.NewHandler(targetingSvc)
-
+	membersSvc := members.NewService(db, cfg, auditSvc)
+	membersHandler := members.NewHandler(membersSvc)
 	expiryJob := jobs.NewExpiryJob(db, auditSvc, evalPublisher)
 	scheduler := jobs.NewScheduler(expiryJob, cfg.ExpiryInterval)
 
@@ -76,6 +79,7 @@ func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client) *Server {
 		evalHandler:      evalHandler,
 		evalSubscriber:   evalSubscriber,
 		scheduler:        scheduler,
+		membersHandler:   membersHandler,
 	}
 	s.registerRoutes(router)
 
