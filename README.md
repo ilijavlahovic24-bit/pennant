@@ -108,17 +108,19 @@ WS     /v1/ws/flags                    # Real-time flag updates
 
 | Component | Status |
 |---|---|
-| Auth (register, login, refresh) | Completed |
-| Flag CRUD + environments |  Completed |
-| Redis cache + pub/sub |  Completed |
-| RBAC middleware |  Completed |
-| Gradual rollout + targeting |  Completed |
-| Audit log |  Completed |
-| WebSocket live updates |  Completed |
-| Background job (expiry) |  Completed |
-| React dashboard |  Completed |
+| Auth (register, login, refresh rotation, logout, switch-org) | Completed |
+| Flag CRUD + environments | Completed |
+| Redis cache + pub/sub invalidation | Completed |
+| RBAC middleware (owner / editor / viewer) | Completed |
+| Gradual rollout (deterministic bucketing) + targeting rules | Completed |
+| Audit log (immutable, DB trigger) | Completed |
+| WebSocket live updates | Completed |
+| Background job (expiry scheduler) | Completed |
+| Member management + invite system | Completed |
+| React dashboard (login, flags, editor, audit, live updates) | Completed |
 | Docker Compose setup | Completed |
-
+| CI/CD (GitHub Actions) | Completed |
+| Unit + integration tests | Completed |
 ---
 
 ## Local Development
