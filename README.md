@@ -131,7 +131,7 @@ git clone https://github.com/ilijavlahovic24-bit/pennant
 cd pennant
 
 # Start infrastructure
-docker compose up -d postgres redis
+docker compose up --build
 
 # Run backend
 cd backend
@@ -139,7 +139,8 @@ go run ./cmd/server
 
 # Run frontend
 cd frontend
-npm install && npm run dev
+npm install
+npm run dev
 ```
 
 ---
