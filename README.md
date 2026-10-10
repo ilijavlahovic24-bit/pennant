@@ -108,16 +108,16 @@ WS     /v1/ws/flags                    # Real-time flag updates
 
 | Component | Status |
 |---|---|
-| Auth (register, login, refresh) |  Planned |
-| Flag CRUD + environments |  Planned |
-| Redis cache + pub/sub |  Planned |
-| RBAC middleware |  Planned |
-| Gradual rollout + targeting |  Planned |
-| Audit log |  Planned |
-| WebSocket live updates |  Planned |
-| Background job (expiry) |  Planned |
-| React dashboard |  Planned |
-| Docker Compose setup | Planned |
+| Auth (register, login, refresh) | Completed |
+| Flag CRUD + environments |  Completed |
+| Redis cache + pub/sub |  Completed |
+| RBAC middleware |  Completed |
+| Gradual rollout + targeting |  Completed |
+| Audit log |  Completed |
+| WebSocket live updates |  Completed |
+| Background job (expiry) |  Completed |
+| React dashboard |  Completed |
+| Docker Compose setup | Completed |
 
 ---
 
