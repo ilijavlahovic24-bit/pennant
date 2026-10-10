@@ -27,19 +27,19 @@ Pennant is a self-hosted feature flag platform that enables engineering teams to
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    React Frontend                   │
-│         (Dashboard, Flag Editor, Audit Log)         │
-└──────────────────────┬──────────────────────────────┘
-                       │ REST + WebSocket
-┌──────────────────────▼──────────────────────────────┐
-│                    Go API Server                    │
-│              (Gin, JWT Auth, RBAC)                  │
-├────────────────┬─────────────────┬──────────────────┤
-│   PostgreSQL   │      Redis      │  Background Jobs │
-│  (persistent   │  (flag cache,   │  (flag expiry,   │
-│   storage)     │   pub/sub)      │   notifications) │
-└────────────────┴─────────────────┴──────────────────┘
+              ┌─────────────────────────────────────────────────────┐
+              │                    React Frontend                   │
+              │         (Dashboard, Flag Editor, Audit Log)         │
+              └──────────────────────┬──────────────────────────────┘
+                                    │ REST + WebSocket
+              ┌──────────────────────▼──────────────────────────────┐
+              │                    Go API Server                    │
+              │              (Gin, JWT Auth, RBAC)                  │
+              ├────────────────┬─────────────────┬──────────────────┤
+              │   PostgreSQL   │      Redis      │  Background Jobs │
+              │  (persistent   │  (flag cache,   │  (flag expiry,   │
+              │   storage)     │   pub/sub)      │   notifications) │
+              └────────────────┴─────────────────┴──────────────────┘
 ```
 
 **Why Redis?**
